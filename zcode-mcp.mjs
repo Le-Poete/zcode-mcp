@@ -158,7 +158,7 @@ const TOOLS = [
         },
         workdir: {
           type: "string",
-          description: `可选:GLM 的工作目录(绝对路径)。缺省用沙箱 ${DEFAULT_SANDBOX}`,
+          description: "可选:GLM 的工作目录(绝对路径)。缺省用本机沙箱目录(见 --doctor 输出)",
         },
         timeout_seconds: { type: "number", description: "可选:超时秒数,默认 300" },
       },
