@@ -1,8 +1,8 @@
 {
-  "installedCli": "C:/Users/<你>/AppData/Local/Programs/ZCode/resources/glm/zcode.cjs",
-  "sandbox": "C:/Users/<你>/zcode-mcp-sandbox",
-  "flashSession": "sess_<桥会话id-见README>",
-  "freeSession": "sess_<免费档桥会话id-见README>",
-  "forkCliDir": "C:/Users/<你>/<ZCode源码fork>/apps/zcode-cli/packages/cli",
-  "forkBuiltinConfig": "C:/Users/<你>/<ZCode源码fork>/config/provider/zcode-builtin.json"
+  "installedCli": "",
+  "sandbox": "",
+  "flashSession": "",
+  "freeSession": "",
+  "forkCliDir": "",
+  "forkBuiltinConfig": ""
 }

@@ -43,7 +43,20 @@ node "%LOCALAPPDATA%/Programs/ZCode/resources/glm/zcode.cjs" login bigmodel
 ### 2. 配置
 
 复制 `zcode-mcp.config.example.json` 为 `zcode-mcp.config.json`,按需填写。
-最简配置只需要 `installedCli`(其余通道留空即禁用)。
+**全部字段都可以留空**——留空时各字段有自动行为(见下表),最简安装零配置。
+
+| 字段 | 留空时的行为 | 怎么找你机器上的值 |
+|---|---|---|
+| `installedCli` | 自动探测:Windows 在 `%LOCALAPPDATA%\Programs\ZCode\resources\glm\zcode.cjs` | `--doctor` 会打印解析结果 |
+| `sandbox` | 默认 `~/zcode-mcp-sandbox`(自动创建) | 随意,任意可写目录 |
+| `flashSession` | 该通道禁用 | 见「桥会话」章节 |
+| `freeSession` | 该通道禁用(glm-free) | 见「免费档」章节 |
+| `forkCliDir` / `forkBuiltinConfig` | glm-free 通道禁用 | 你的 ZCode 源码 fork 目录 |
+
+配置文件里若写**相对路径**,一律相对配置文件所在目录解析(与 MCP 客户端的工作目录无关)。
+所有路径推荐正斜杠 `/` 写法(Windows/macOS/Linux 通用)。
+
+**本文件含本机会话信息,已在 .gitignore 中,不要提交到任何仓库。**
 
 ### 3. 接入 MCP 客户端
 
