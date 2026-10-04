@@ -51,21 +51,38 @@
 
 ```
 glm-free 调用失败
-├─ "Model creation failed" → 注册表没进 start-plan
-│   ├─ fork 分支对不对? → git -C <fork> branch --show-current
-│   ├─ bootstrap build 过没有? → 看 dist 时间戳,必要时重 build(坑位5)
-│   └─ 日志 grep traceId:turnPhase=model_creation
-├─ 3012/405 → 出现即说明有人在裸调网关(违反机制4),检查调用路径
+├─ "Model creation failed" → 先按 traceId 查 turn.failed.error.cause
+│   ├─ cause="Select a model before continuing" → 检查免费模型是否进入注册表
+│   │   ├─ 是否误用装机版独立 CLI? 0.16.9 未纳入 Start Plan 账号覆盖层
+│   │   ├─ fork 分支对不对? → git -C <fork> branch --show-current
+│   │   └─ bootstrap 与依赖 build 过没有? → 检查 dist(坑位5)
+│   └─ 其他 cause → 按日志诊断,不能仅凭外层错误认定未登录或额度用尽
+├─ 3012/405 → 检查客户端兼容性和实际 CLI 请求路径,不得绕过校验
 ├─ "exceed quota limit" → 免费档滚动配额用尽,等窗口刷新(历史上分钟级恢复)
 └─ 免费档模型清单 → GLM-5.3-Flash / GLM-5.2 / GLM-5-Turbo(内置配置白名单)
 ```
 
+2026-10-05 复验：装机版 Start Plan 调用约 5.6s 失败，底层 cause 为
+`Select a model before continuing`。fork 提交 b23dfa2 的 bootstrap 及依赖构建后，
+隔离免费 CLI 调用约 14.7s 成功；配置免费桥会话后，MCP glm-free 约 23.8s 成功。
+免费白名单没有付费回退。此结果不代表所有账号/平台可用，仍属实验性、账号风险自担。
+MCP stderr 还有未定位的非致命 `ZCode Built-in missing`；全仓库 typecheck/lint
+尝试均未通过（内存不足/异常退出），不得写成完整仓库验收通过。
+
+首次构建建议 `pnpm --filter '@zcode/bootstrap...' build`，连依赖一起构建。
+默认安装只接订阅通道，repair-cli 不增加 Start Plan 支持；免费调用必须显式
+`model="glm-free"`，glm_models/test-client.mjs 仍走默认装机版通道。
+forkCliDir 必须指向 apps/zcode-cli/packages/cli。修改本地免费配置后重载 MCP；
+不要将隔离数据库的会话 id 填给使用另一会话库的 MCP。
+
 ## 桥会话重置流程
 
-1. `zcode -p "init" --cwd <sandbox>` 跑一次,从 `session` 表取最新 id
-2. 更新该会话 `session_entry` 的 `runtime/model_selection`:
-   flash → `{"providerId":"account:bigmodel-individual-coding-plan","modelId":"GLM-5.3-Flash","options":{"reasoningLevel":"max"}}`
-   free  → `{"providerId":"account:bigmodel-start-plan","modelId":"GLM-5.3-Flash","options":{"reasoningLevel":"max"}}`
+1. 优先按 README 的临时免费默认配置，通过 fork 创建专用测试会话；从本次
+   `--json` 输出记录 sessionId，不按数据库“最新会话”猜测，避免其他进程并发建会话。
+2. 核验该会话 `session_entry` 的 `runtime/model_selection`，其 data 有 modelSelection 包装:
+   flash → `{"modelSelection":{"providerId":"account:bigmodel-individual-coding-plan","modelId":"GLM-5.3-Flash","options":{"reasoningLevel":"max"}}}`
+   free  → `{"modelSelection":{"providerId":"account:bigmodel-start-plan","modelId":"GLM-5.3-Flash","options":{"reasoningLevel":"max"}}}`
+   如需人工改库，先停止使用目标会话的进程并备份，不修改其他会话。
 3. resume 一次确认落库,把新 id 写回 `zcode-mcp.config.json`
 
 ## 维护红线
