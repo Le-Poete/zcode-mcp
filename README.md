@@ -32,19 +32,23 @@
 
 ### 1. 登录(一次性)
 
-**未登录的标志**:首次调用返回 `Model creation failed / Select a model before continuing`
-——这是 CLI 没有默认模型选择,不是账号或服务问题,登录一次即解:
+**未登录的常见表现**:首次调用返回 `Select a model before continuing`(CLI 没有可用的
+模型选择;其他成因请以日志 cause 为准)。登录命令需要两个信息:**你机器上 CLI 的实际
+路径**(跑 `node zcode-mcp.mjs --doctor` 看 `installedCli` 行)和**内置配置环境变量**
+(login 命令自身需要它;MCP 启动子进程时会自动注入,但你在终端手工运行时不会)。
 
 ```bash
-# 国内(bigmodel.cn,会员在这边):
-node "%LOCALAPPDATA%/Programs/ZCode/resources/glm/zcode.cjs" login bigmodel
-# 注意:装机版 0.16.9 的位置参数可能不生效,此时用 ZCode 源码仓库的 CLI 执行同款命令
+# 每用户安装形态(%LOCALAPPDATA%):
+set ZCODE_BUILTIN_PROVIDER_CONFIG_FILE=%LOCALAPPDATA%\Programs\ZCode\resources\config\provider\zcode-builtin.json
+node "%LOCALAPPDATA%\Programs\ZCode\resources\glm\zcode.cjs" login bigmodel
+
+# Program Files(全机器)安装形态——把上面两处路径里的 %LOCALAPPDATA%\Programs 换成
+# %ProgramFiles% 即可;自定义安装目录用 --doctor 给出的实际路径替换。
 ```
 
-登录态落盘于 `~/.zcode/v2/credentials.json`,自动刷新,无需反复授权。
-
-> Program Files(全机器)安装形态的用户:CLI 自身的内置配置探测在该布局下会失效,
-> zcode-mcp 已代为注入正确路径(从 CLI 位置推导),无需手工设置。
+注意:装机版 0.16.9 的国内登录参数(`login bigmodel`)可能不生效,此时用 ZCode
+源码仓库的 CLI 执行同款命令(免费档章节的 fork 就行)。登录态落盘于
+`~/.zcode/v2/credentials.json`,自动刷新,无需反复授权。
 
 ### 2. 配置
 

@@ -98,9 +98,11 @@ function runDoctor() {
   lines.push(`node: ${process.version} | cwd: ${process.cwd()}`);
   lines.push(`self: ${SELF_DIR}`);
   // 只把「已启用通道的必需项」计入失败:fork 未配置=禁用而非缺失;
-  // installedCli 仅在非 free-only 布局(freeSession 未配置)时为必需。
+  // installedCli 在 free-only(freeSession 已配且 flash 未配)时才非必需——
+  // 默认通道与 glm_models 恒需装机版;flash 需装机版;free 只需 fork。
   const freeEnabled = Boolean(FREE_SESSION);
-  const installedCliRequired = !freeEnabled;
+  const flashEnabled = Boolean(FLASH_SESSION);
+  const installedCliRequired = !freeEnabled || flashEnabled;
   let cliOk = existsSync(ZCODE_BIN);
   lines.push(`${cliOk ? "OK  " : installedCliRequired ? "MISS" : "WARN"} installedCli(装机版 CLI): ${ZCODE_BIN}${cliOk ? "" : installedCliRequired ? "" : "(free-only 布局,非必需)"}`);
   if (!cliOk && installedCliRequired) missCount += 1;
@@ -119,7 +121,8 @@ function runDoctor() {
   lines.push(`     sandbox: ${DEFAULT_SANDBOX}`);
   lines.push(`     flashSession: ${FLASH_SESSION ? "已配置" : "未配置(glm-5.3-flash 禁用)"}`);
   lines.push(`     freeSession: ${FREE_SESSION ? "已配置" : "未配置(glm-free 禁用)"}`);
-  lines.push(`     登录状态: 无法离线检测;首次真实调用报 "Select a model" 即需 login(见 README「登录」)`);
+  lines.push(`     通道依赖: 默认/glm_models/glm-5.3-flash → 装机版CLI;glm-free → fork`);
+  lines.push(`     登录状态: 无法离线检测;真实调用报 "Select a model" 通常需 login(见 README「登录」)`);
   lines.push("");
   lines.push("提示:MCP 客户端(ChatGPT/Claude)配置里的 args 必须是绝对路径;");
   lines.push("本文件所在目录见上方 self 行,把该目录拼到文件名前即可。");
@@ -304,11 +307,19 @@ async function callTool(name, args) {
     r = await runZcode(cliArgs, timeoutMs);
   }
   let text = (r.out.trim() || "") + (r.err.trim() ? `\n[stderr]\n${r.err.trim()}` : "");
-  // 高频误区自动提示:"Select a model" 是 CLI 未登录/无默认模型的标志(登录一次即解)。
-  if (/Select a model before continuing|Model creation failed/i.test(text)) {
+  // 错误提示按具体程度区分,不做超出证据的归因:
+  // "Select a model" 是明确的"无模型选择"标志(未登录的常见表现,但不排除其他成因);
+  // 泛化的 "Model creation failed" 只指向日志排查。
+  if (/Select a model before continuing/i.test(text)) {
     text +=
-      "\n\n[zcode-mcp] 该错误的常见原因是本机 CLI 尚未登录(无默认模型选择),不是账号或服务问题。" +
-      "解决:按 README「登录」一节执行一次 login bigmodel(国内账号),凭证落盘后自动生效。";
+      "\n\n[zcode-mcp] 该错误含义是 CLI 当前没有可用的模型选择。常见原因是本机 CLI 未登录" +
+      "(登录会写入默认模型选择),也可能是账号套餐或 provider 配置问题——请以日志中的具体 cause 为准。" +
+      "若是未登录:按 README「登录」一节执行一次 login bigmodel(国内账号)。";
+  } else if (/Model creation failed/i.test(text)) {
+    const trace = text.match(/traceId[=: ]+([0-9a-f-]{36})/i)?.[1];
+    text +=
+      `\n\n[zcode-mcp] 模型创建失败的成因需看具体 cause(未登录/套餐/provider 配置等均可能)。` +
+      `请在 ~/.zcode/cli/log/ 的当日 jsonl 日志中检索 ${trace ?? "返回文本里的 traceId"} 定位。`;
   }
   return { content: [{ type: "text", text: text || "(无输出)" }], isError: r.code !== 0 };
 }
