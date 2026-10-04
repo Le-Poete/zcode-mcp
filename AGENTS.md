@@ -22,9 +22,10 @@
 3. **免费档凭证 = zcodejwttoken**:桌面端 services 层的
    `accountProviderRequestAuthService` 对 `planKind === "start-plan"` 返回
    `{apiKey: zcodejwttoken}`。该 JWT 无 exp 字段(不过期),payload 只有 user_id。
-4. **WAF 边界**:直接 HTTP 调 `zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages`
-   会被 3012 "unusual activity" 拦(完整复刻归因头也没用)。**唯一可行路径是让
-   ZCode CLI 自己发**(其完整中间件栈可过)。不要试图裸 HTTP 调免费档。
+4. **客户端兼容性边界**:免费档网关(`zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages`)
+   仅接受 ZCode 客户端栈发出的请求,直接 HTTP 复刻(即使带全套归因头)会收到
+   3012 拒绝——这是官方的客户端校验设计。**正确姿势是让 CLI 自己发请求**;
+   维护者不得编写或引入绕过该校验的代码。
 5. **dist 陷阱**:CLI 的 `-p` 流程加载 `@zcode/bootstrap` 的**预构建 dist**。
    修改 `apps/zcode-cli/packages/bootstrap/src/**` 后必须
    `pnpm --filter @zcode/bootstrap build`,否则改动静默不生效(调试时表现为
@@ -48,7 +49,7 @@ glm-free 调用失败
 │   ├─ fork 分支对不对? → git -C <fork> branch --show-current
 │   ├─ bootstrap build 过没有? → 看 dist 时间戳,必要时重 build(坑位5)
 │   └─ 日志 grep traceId:turnPhase=model_creation
-├─ 401/3012 类错误 → 不该出现(CLI 走中间件栈);若手工 curl 过,停止裸调(机制4)
+├─ 3012/405 → 出现即说明有人在裸调网关(违反机制4),检查调用路径
 ├─ "exceed quota limit" → 免费档滚动配额用尽,等窗口刷新(历史上分钟级恢复)
 └─ 免费档模型清单 → GLM-5.3-Flash / GLM-5.2 / GLM-5-Turbo(内置配置白名单)
 ```
@@ -66,10 +67,14 @@ glm-free 调用失败
 - `zcode-mcp.config.json` 不入库(.gitignore)
 - 不向官方组织仓库(zai-org 等)提交任何东西;fork 只在用户自己账号下操作
 - 凭证解密仅限本机进程内(CLI 自动做);解密结果不落盘、不进日志、不进文档
+- **不编写绕过官方客户端校验/WAF 的代码**;文档措辞保持"客户端兼容性"视角,
+  不使用"破解/绕过/绕开风控"类表述
+- 免费档相关描述必须保留"实验性 + 账号风险自担"的警示,不得删改
 
 ## 已知未解
 
 - 免费档配额的具体窗口长度/额度未测出(仅观察到存在滚动限额)
-- WAF 3012 的精确判定维度未知(仅确认 CLI 中间件栈可过、裸 fetch 不过)
+- 免费档网关客户端校验的精确判定维度未知(仅确认官方客户端栈可通行)
 - 装机版 CLI 何时原生支持 `login bigmodel` 位置参数——关注官方更新,
   若支持则 fork 的登录环节可退役
+- 官方若提供 `zcode mcp serve` 或 CLI 原生免费档支持,按 README 日落条款迁移
