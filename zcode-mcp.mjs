@@ -17,6 +17,7 @@ import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repairCliMetadata } from "./repair-cli.mjs";
 
 const SELF_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -64,7 +65,7 @@ function cliRuntimeEnv() {
     if (existsSync(p)) env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = p;
   }
   if (!env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE) {
-    const p = join(homedir(), ".zcode", "v2", "provider_config.json");
+    const p = join(env.ZCODE_DATA_BASE_DIR || homedir(), ".zcode", "v2", "provider_config.json");
     if (existsSync(p)) env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE = p;
   }
   return env;
@@ -123,6 +124,7 @@ function runDoctor() {
   lines.push(`     freeSession: ${FREE_SESSION ? "已配置" : "未配置(glm-free 禁用)"}`);
   lines.push(`     通道依赖: 默认/glm_models/glm-5.3-flash → 装机版CLI;glm-free → fork`);
   lines.push(`     登录状态: 无法离线检测;真实调用报 "Select a model" 通常需 login(见 README「登录」)`);
+  lines.push(`     已在桌面登录但 CLI 无模型: --repair-cli 预览元数据修复，--repair-cli --apply 执行。`);
   lines.push("");
   lines.push("提示:MCP 客户端(ChatGPT/Claude)配置里的 args 必须是绝对路径;");
   lines.push("本文件所在目录见上方 self 行,把该目录拼到文件名前即可。");
@@ -330,6 +332,20 @@ const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
 if (process.argv.includes("--doctor")) {
   rl.close();
   process.exit(runDoctor());
+}
+
+if (process.argv.includes("--repair-cli")) {
+  rl.close();
+  try {
+    const env = cliRuntimeEnv();
+    console.log(JSON.stringify(repairCliMetadata({ env,
+      builtinPath: env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE,
+      apply: process.argv.includes("--apply") }), null, 2));
+    process.exit(0);
+  } catch (e) {
+    console.error(`[zcode-mcp] 元数据修复失败: ${e.message}`);
+    process.exit(1);
+  }
 }
 
 rl.on("line", (line) => {

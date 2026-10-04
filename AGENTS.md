@@ -13,9 +13,13 @@
 
 ## 五个已验证的关键机制
 
-1. **无头调用**:`zcode -p "<task>" --cwd <dir> --mode yolo`。新会话的模型来自
-   账号默认(coding plan/GLM-5.3),**不读** `~/.zcode/v2/provider_config.json` 的
-   defaultModelSelection(实测翻配置无效)。
+1. **无头调用**:`zcode -p "<task>" --cwd <dir> --mode yolo`。装机版 0.16.9
+   新会话读取 `~/.zcode/v2/provider_config.json` 的 **config.defaultModelSelection**。
+   桌面已有凭据仍不等于独立 CLI 已就绪：CLI 还需
+   `account-provider:<providerId>:identity` 索引，指向既有 Coding Plan API key。
+   2026-10-05 本机补齐上述两项后，glm_ask 和 glm_models 均实测成功。
+   用 `node zcode-mcp.mjs --repair-cli` 预览，`--repair-cli --apply` 显式修复。
+   修复只使用唯一既有凭据的键名元数据，不解密 token，不覆盖已有选择/索引。
 2. **模型切换靠桥会话**:`--resume <sid>` 会恢复该会话持久化的
    `runtime/model_selection`。把桥会话的选择改成目标模型(resume 一次让它落库),
    之后所有 resume 都用该模型。桥会话 id 是 MCP 配置里的 `flashSession`/`freeSession`。

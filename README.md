@@ -32,18 +32,34 @@
 
 ### 1. 登录(一次性)
 
+**已经在桌面版登录，CLI 仍报没有模型选择？** 桌面登录可能已保存 Coding Plan
+凭据，但缺少独立 CLI 的账号身份索引及默认模型。先运行无网络、只读的修复预览：
+
+```powershell
+node ./zcode-mcp.mjs --repair-cli
+# 仅在预览确认存在唯一的现有 Coding Plan 凭据后，补齐缺失元数据：
+node ./zcode-mcp.mjs --repair-cli --apply
+```
+
+修复不会解密或更改现有 API key/token，也不会改写已有默认模型、身份索引或
+其他 provider 配置。原文件备份保存在各自目录；重复执行不会重复写入。
+多个账号或不支持的配置会拒绝自动修复，需要使用官方登录/模型选择流程。
+该命令修复本地元数据，不验证套餐、凭据有效性或服务可用性。
+
 **未登录的常见表现**:首次调用返回 `Select a model before continuing`(CLI 没有可用的
 模型选择;其他成因请以日志 cause 为准)。登录命令需要两个信息:**你机器上 CLI 的实际
 路径**(跑 `node zcode-mcp.mjs --doctor` 看 `installedCli` 行)和**内置配置环境变量**
 (login 命令自身需要它;MCP 启动子进程时会自动注入,但你在终端手工运行时不会)。
 
-```bash
+```powershell
 # 每用户安装形态(%LOCALAPPDATA%):
-set ZCODE_BUILTIN_PROVIDER_CONFIG_FILE=%LOCALAPPDATA%\Programs\ZCode\resources\config\provider\zcode-builtin.json
-node "%LOCALAPPDATA%\Programs\ZCode\resources\glm\zcode.cjs" login bigmodel
+$env:ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = "$env:LOCALAPPDATA/Programs/ZCode/resources/config/provider/zcode-builtin.json"
+node "$env:LOCALAPPDATA/Programs/ZCode/resources/glm/zcode.cjs" login bigmodel
 
-# Program Files(全机器)安装形态——把上面两处路径里的 %LOCALAPPDATA%\Programs 换成
-# %ProgramFiles% 即可;自定义安装目录用 --doctor 给出的实际路径替换。
+# Program Files(全机器)安装形态：
+$env:ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = "$env:ProgramFiles/ZCode/resources/config/provider/zcode-builtin.json"
+node "$env:ProgramFiles/ZCode/resources/glm/zcode.cjs" login bigmodel
+# 选择与你的安装形态相符的一组命令；自定义路径以 --doctor 输出为准。
 ```
 
 注意:装机版 0.16.9 的国内登录参数(`login bigmodel`)可能不生效,此时用 ZCode
@@ -147,7 +163,9 @@ node test-client.mjs
 
 ```
 zcode-mcp.mjs                    MCP 服务器(零依赖,手写 stdio 协议)
-test-client.mjs                  端到端自测客户端
+    test-client.mjs                  端到端自测客户端
+    repair-cli.mjs                   已有桌面凭据的 CLI 元数据修复(不解密 token)
+    repair-cli.test.mjs              修复的隔离回归测试(node --test repair-cli.test.mjs)
 zcode-mcp.config.example.json    配置模板
 AGENTS.md                        给 AI 维护者的操作手册(坑位与排障)
 ```
