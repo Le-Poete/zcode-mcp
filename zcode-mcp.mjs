@@ -38,10 +38,18 @@ function loadLocalConfig() {
 }
 const localConfig = loadLocalConfig();
 
-/** 装机版 ZCode CLI 自动探测:优先显式配置,其次 %LOCALAPPDATA% 标准位置。 */
+/** 装机版 ZCode CLI 自动探测:按安装形态逐一尝试常见位置。
+ *  覆盖:每用户电子安装版(LOCALAPPDATA)与全机器安装(Program Files)。
+ *  MSIX/商店版装在 WindowsApps(ACL 受限通常不可直读),由 --doctor 给出指引。 */
 function detectInstalledCli() {
-  const localAppData = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
-  return join(localAppData, "Programs", "ZCode", "resources", "glm", "zcode.cjs");
+  const programFiles = process.env.ProgramFiles || "C:/Program Files";
+  const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:/Program Files (x86)";
+  const candidates = [
+    join(homedir(), "AppData", "Local", "Programs", "ZCode", "resources", "glm", "zcode.cjs"),
+    join(programFiles, "ZCode", "resources", "glm", "zcode.cjs"),
+    join(programFilesX86, "ZCode", "resources", "glm", "zcode.cjs"),
+  ];
+  return candidates.find((p) => existsSync(p)) || candidates[0];
 }
 const ZCODE_BIN =
   process.env.ZCODE_BIN || resolvePath(localConfig.installedCli) || detectInstalledCli();
@@ -58,17 +66,26 @@ const ZCODE_SRC_CLI_DIR = process.env.ZCODE_MCP_SRC_CLI_DIR || resolvePath(local
 const ZCODE_SRC_BUILTIN_CONFIG =
   process.env.ZCODE_MCP_SRC_BUILTIN_CONFIG || resolvePath(localConfig.forkBuiltinConfig) || "";
 
-/** `node zcode-mcp.mjs --doctor`:路径自检。给人和 AI 客户端排查"找不到文件"用。 */
+/** `node zcode-mcp.mjs --doctor`:路径自检。给人和 AI 客户端排查"找不到文件"用。
+ *  退出码:有关键路径 MISS 时非 0,脚本可依赖。 */
 function runDoctor() {
   const lines = [];
+  let missCount = 0;
   const check = (label, path, extra = "") => {
     const ok = Boolean(path && existsSync(path));
+    if (!ok) missCount += 1;
     lines.push(`${ok ? "OK  " : "MISS"} ${label}: ${path || "(未配置)"}${extra}`);
     return ok;
   };
   lines.push(`node: ${process.version} | cwd: ${process.cwd()}`);
   lines.push(`self: ${SELF_DIR}`);
-  check("installedCli(装机版 CLI)", ZCODE_BIN);
+  const cliOk = check("installedCli(装机版 CLI)", ZCODE_BIN);
+  if (!cliOk) {
+    lines.push("     ├ 探测过: %LOCALAPPDATA%\\Programs、%ProgramFiles%、%ProgramFiles(x86)%");
+    lines.push("     └ 仍 MISS 的常见原因:MSIX/商店版(WindowsApps 内 ACL 受限不可直读,");
+    lines.push("        建议改装桌面安装版),或自定义安装目录(把完整路径填进 installedCli)。");
+    lines.push("     └ 定位命令: powershell -c \"Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -EA 0 | ? DisplayName -like '*ZCode*' | % InstallLocation\"");
+  }
   check("forkCliDir 源码入口", ZCODE_SRC_CLI_DIR ? join(ZCODE_SRC_CLI_DIR, "src", "main.ts") : "");
   check("forkBuiltinConfig", ZCODE_SRC_BUILTIN_CONFIG);
   lines.push(`     sandbox: ${DEFAULT_SANDBOX}`);
@@ -78,12 +95,16 @@ function runDoctor() {
   lines.push("提示:MCP 客户端(ChatGPT/Claude)配置里的 args 必须是绝对路径;");
   lines.push("本文件所在目录见上方 self 行,把该目录拼到文件名前即可。");
   console.log(lines.join("\n"));
+  return missCount > 0 ? 1 : 0;
 }
 
 const NODE = process.execPath;
 
 function runSourceZcode(args, timeoutMs) {
   return new Promise((resolve) => {
+    try {
+      mkdirSync(DEFAULT_SANDBOX, { recursive: true });
+    } catch {}
     const child = spawn(NODE, ["--import", "tsx", "src/main.ts", ...args], {
       cwd: ZCODE_SRC_CLI_DIR,
       env: {
@@ -114,6 +135,10 @@ function runSourceZcode(args, timeoutMs) {
 
 function runZcode(args, timeoutMs) {
   return new Promise((resolve) => {
+    // spawn 的 cwd 不存在会直接 ENOENT;沙箱目录按需创建(glm_models 等入口也会走到这里)。
+    try {
+      mkdirSync(DEFAULT_SANDBOX, { recursive: true });
+    } catch {}
     const child = spawn(NODE, [ZCODE_BIN, ...args], {
       cwd: DEFAULT_SANDBOX,
       env: process.env,
@@ -188,41 +213,65 @@ async function callTool(name, args) {
   if (name !== "glm_ask")
     return { content: [{ type: "text", text: `未知工具 ${name}` }], isError: true };
 
+  // 参数校验:非法值直接拒绝,不静默落到默认通道(否则拼写错误会悄悄烧订阅额度)。
+  const task = typeof args.task === "string" ? args.task.trim() : "";
+  if (!task) {
+    return {
+      content: [{ type: "text", text: "参数错误:task 必填(要委派给 GLM 的完整任务描述)。" }],
+      isError: true,
+    };
+  }
+  const VALID_MODELS = ["glm-5.3", "glm-5.3-flash", "glm-free"];
+  const model = String(args.model || "").toLowerCase();
+  if (model && !VALID_MODELS.includes(model)) {
+    return {
+      content: [{ type: "text", text: `参数错误:model 必须是 ${VALID_MODELS.join(" / ")} 之一或省略,收到:${JSON.stringify(args.model)}` }],
+      isError: true,
+    };
+  }
+
   const workdir = args.workdir || DEFAULT_SANDBOX;
   mkdirSync(workdir, { recursive: true });
   const timeoutMs = Math.min(Math.max((args.timeout_seconds ?? 300) * 1000, 10_000), 900_000);
 
-  // glm-free 走 fork 源码 CLI(免订阅额度);flash 走桥会话;默认走装机版新会话。
-  const model = String(args.model || "").toLowerCase();
-  if (model === "glm-free" && (!FREE_SESSION || !ZCODE_SRC_CLI_DIR || !ZCODE_SRC_BUILTIN_CONFIG)) {
-    return {
-      content: [{ type: "text", text: "glm-free 未配置:需要在 zcode-mcp.config.json 或环境变量里提供 freeSession/forkCliDir/forkBuiltinConfig(见 README「免费档」一章)。" }],
-      isError: true,
-    };
-  }
-  if (model === "glm-5.3-flash" && !FLASH_SESSION) {
-    return {
-      content: [{ type: "text", text: "glm-5.3-flash 未配置:需要 flashSession(见 README)。" }],
-      isError: true,
-    };
-  }
+  // 通道分流:glm-free 走 fork 源码 CLI(只依赖 fork 自身文件,不要求装机版);
+  // flash / 默认走装机版 CLI(存在性检查在本分支内做)。
   let r;
-  if (!existsSync(ZCODE_BIN)) {
-    return {
-      content: [{ type: "text", text: `找不到 ZCode CLI: ${ZCODE_BIN}\n运行 node zcode-mcp.mjs --doctor 检查路径;Windows 默认位置是 %LOCALAPPDATA%\\Programs\\ZCode\\resources\\glm\\zcode.cjs` }],
-      isError: true,
-    };
-  }
   if (model === "glm-free") {
+    if (!FREE_SESSION || !ZCODE_SRC_CLI_DIR || !ZCODE_SRC_BUILTIN_CONFIG) {
+      return {
+        content: [{ type: "text", text: "glm-free 未配置:需要在 zcode-mcp.config.json 或环境变量里提供 freeSession/forkCliDir/forkBuiltinConfig(见 README「免费档」一章)。" }],
+        isError: true,
+      };
+    }
+    const forkEntry = join(ZCODE_SRC_CLI_DIR, "src", "main.ts");
+    if (!existsSync(forkEntry) || !existsSync(ZCODE_SRC_BUILTIN_CONFIG)) {
+      return {
+        content: [{ type: "text", text: `glm-free 的 fork 路径无效: 入口 ${forkEntry} 或内置配置 ${ZCODE_SRC_BUILTIN_CONFIG} 不存在。请核对该 fork 仓库是否已克隆/切换分支。` }],
+        isError: true,
+      };
+    }
     r = await runSourceZcode(
-      ["--resume", FREE_SESSION, "-p", String(args.task), "--cwd", workdir, "--mode", "yolo"],
+      ["--resume", FREE_SESSION, "-p", task, "--cwd", workdir, "--mode", "yolo"],
       timeoutMs,
     );
   } else {
-    const flash = model === "glm-5.3-flash";
-    const cliArgs = flash
-      ? ["--resume", FLASH_SESSION, "-p", String(args.task), "--cwd", workdir, "--mode", "yolo"]
-      : ["-p", String(args.task), "--cwd", workdir, "--mode", "yolo"];
+    if (model === "glm-5.3-flash" && !FLASH_SESSION) {
+      return {
+        content: [{ type: "text", text: "glm-5.3-flash 未配置:需要 flashSession(见 README)。" }],
+        isError: true,
+      };
+    }
+    if (!existsSync(ZCODE_BIN)) {
+      return {
+        content: [{ type: "text", text: `找不到 ZCode CLI: ${ZCODE_BIN}\n已探测 %LOCALAPPDATA%\\Programs 与 %ProgramFiles% 常见位置;运行 node zcode-mcp.mjs --doctor 查看详情(含 MSIX 版说明与注册表定位命令)。` }],
+        isError: true,
+      };
+    }
+    const cliArgs =
+      model === "glm-5.3-flash"
+        ? ["--resume", FLASH_SESSION, "-p", task, "--cwd", workdir, "--mode", "yolo"]
+        : ["-p", task, "--cwd", workdir, "--mode", "yolo"];
     r = await runZcode(cliArgs, timeoutMs);
   }
   const text = (r.out.trim() || "") + (r.err.trim() ? `\n[stderr]\n${r.err.trim()}` : "");
@@ -234,8 +283,7 @@ const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
 
 if (process.argv.includes("--doctor")) {
   rl.close();
-  runDoctor();
-  process.exit(0);
+  process.exit(runDoctor());
 }
 
 rl.on("line", (line) => {
