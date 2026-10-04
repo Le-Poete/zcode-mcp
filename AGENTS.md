@@ -20,6 +20,8 @@
    2026-10-05 本机补齐上述两项后，glm_ask 和 glm_models 均实测成功。
    用 `node zcode-mcp.mjs --repair-cli` 预览，`--repair-cli --apply` 显式修复。
    修复只使用唯一既有凭据的键名元数据，不解密 token，不覆盖已有选择/索引。
+   (repair-cli 的加密实现与上游 zai-org/ZCode 的 credential-cipher.ts 同源对齐,
+   该算法本身随上游 Apache-2.0 开源;此处仅做加密兼容,不做解密。)
 2. **模型切换靠桥会话**:`--resume <sid>` 会恢复该会话持久化的
    `runtime/model_selection`。把桥会话的选择改成目标模型(resume 一次让它落库),
    之后所有 resume 都用该模型。桥会话 id 是 MCP 配置里的 `flashSession`/`freeSession`。

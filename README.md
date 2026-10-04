@@ -42,7 +42,8 @@ node ./zcode-mcp.mjs --repair-cli --apply
 ```
 
 修复不会解密或更改现有 API key/token，也不会改写已有默认模型、身份索引或
-其他 provider 配置。原文件备份保存在各自目录；重复执行不会重复写入。
+其他 provider 配置。原文件备份保存在各自目录；重复执行不会重复写入。极小概率下进程在持锁瞬间崩溃会
+留下 `credentials.json.lock` 空目录(官方 CLI 同样会因此拒写),手动删除该目录即可恢复。
 多个账号或不支持的配置会拒绝自动修复，需要使用官方登录/模型选择流程。
 该命令修复本地元数据，不验证套餐、凭据有效性或服务可用性。
 
@@ -163,9 +164,9 @@ node test-client.mjs
 
 ```
 zcode-mcp.mjs                    MCP 服务器(零依赖,手写 stdio 协议)
-    test-client.mjs                  端到端自测客户端
-    repair-cli.mjs                   已有桌面凭据的 CLI 元数据修复(不解密 token)
-    repair-cli.test.mjs              修复的隔离回归测试(node --test repair-cli.test.mjs)
+test-client.mjs              端到端自测客户端
+repair-cli.mjs                 已有桌面凭据的 CLI 元数据修复(不解密 token)
+repair-cli.test.mjs            修复的隔离回归测试(node --test repair-cli.test.mjs)
 zcode-mcp.config.example.json    配置模板
 AGENTS.md                        给 AI 维护者的操作手册(坑位与排障)
 ```
