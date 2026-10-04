@@ -47,15 +47,37 @@ node "%LOCALAPPDATA%/Programs/ZCode/resources/glm/zcode.cjs" login bigmodel
 
 ### 3. 接入 MCP 客户端
 
+**关键:args 必须用绝对路径。** MCP 客户端(ChatGPT/Claude/Cursor)用它自己的
+工作目录启动服务器,你终端里的相对路径在它那里解析不到——"无法找到文件"
+基本都因此而起。
+
 ```json
 {
   "mcpServers": {
-    "zcode": { "command": "node", "args": ["<本目录>/zcode-mcp.mjs"] }
+    "zcode": {
+      "command": "node",
+      "args": ["C:/绝对路径/zcode-mcp/zcode-mcp.mjs"]
+    }
   }
 }
 ```
 
-ChatGPT 桌面版(开发者模式连接器)、Claude Desktop、Cursor 通用。
+不知道绝对路径?一条命令自检(返回每个路径的解析结果与是否存在):
+
+```bash
+node <zcode-mcp.mjs 的绝对路径> --doctor
+```
+
+也可以让 ChatGPT/Claude 帮你跑这条命令再读输出。
+
+### 4. 路径速查
+
+| 什么 | 在哪 |
+|---|---|
+| 装机版 CLI(zcode.cjs) | Windows: `%LOCALAPPDATA%\Programs\ZCode\resources\glm\zcode.cjs`(找不到了:`dir /s /b zcode.cjs` 全盘搜) |
+| 本项目文件 | `--doctor` 输出的 `self:` 行 |
+| zcode-mcp.config.json 里的相对路径 | 相对**配置文件所在目录**解析(与 MCP 客户端 cwd 无关) |
+| 登录命令要用的 CLI | 同装机版 CLI;`login bigmodel` 不生效时用 fork 源码 CLI(见「免费档」) |
 
 ### 4. 自测
 

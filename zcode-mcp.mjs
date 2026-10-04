@@ -15,12 +15,18 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SELF_DIR = dirname(fileURLToPath(import.meta.url));
 
-/** 本地配置(不入库):zcode-mcp.config.json,字段见 zcode-mcp.config.example.json。 */
+/** 本地配置(不入库):zcode-mcp.config.json,字段见 zcode-mcp.config.example.json。
+ *  相对路径一律相对配置文件所在目录解析(MCP 客户端如 ChatGPT 的 cwd 不可靠,
+ *  不要依赖它;本文件里的相对路径永远锚定在项目自身)。 */
+function resolvePath(p) {
+  if (!p) return p;
+  return isAbsolute(p) ? p : join(SELF_DIR, p);
+}
 function loadLocalConfig() {
   const p = join(SELF_DIR, "zcode-mcp.config.json");
   if (!existsSync(p)) return {};
@@ -32,20 +38,47 @@ function loadLocalConfig() {
 }
 const localConfig = loadLocalConfig();
 
+/** 装机版 ZCode CLI 自动探测:优先显式配置,其次 %LOCALAPPDATA% 标准位置。 */
+function detectInstalledCli() {
+  const localAppData = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+  return join(localAppData, "Programs", "ZCode", "resources", "glm", "zcode.cjs");
+}
 const ZCODE_BIN =
-  process.env.ZCODE_BIN || localConfig.installedCli ||
-  join(homedir(), "AppData/Local/Programs/ZCode/resources/glm/zcode.cjs");
+  process.env.ZCODE_BIN || resolvePath(localConfig.installedCli) || detectInstalledCli();
 const DEFAULT_SANDBOX =
-  process.env.ZCODE_MCP_SANDBOX || localConfig.sandbox || join(homedir(), "zcode-mcp-sandbox");
+  process.env.ZCODE_MCP_SANDBOX ||
+  resolvePath(localConfig.sandbox) ||
+  join(homedir(), "zcode-mcp-sandbox");
 /** Flash 桥会话:其持久化 model_selection=GLM-5.3-Flash,flash 调用经 --resume 复用它。 */
 const FLASH_SESSION = process.env.ZCODE_MCP_FLASH_SESSION || localConfig.flashSession || "";
 /** 免费档(Start Plan)桥会话:走 fork 源码 CLI(支持 start-plan 的补丁版)。 */
 const FREE_SESSION = process.env.ZCODE_MCP_FREE_SESSION || localConfig.freeSession || "";
 /** fork 源码 CLI 目录:standalone 运行时已补 start-plan 支持(需先 build bootstrap)。 */
-const ZCODE_SRC_CLI_DIR =
-  process.env.ZCODE_MCP_SRC_CLI_DIR || localConfig.forkCliDir || "";
+const ZCODE_SRC_CLI_DIR = process.env.ZCODE_MCP_SRC_CLI_DIR || resolvePath(localConfig.forkCliDir) || "";
 const ZCODE_SRC_BUILTIN_CONFIG =
-  process.env.ZCODE_MCP_SRC_BUILTIN_CONFIG || localConfig.forkBuiltinConfig || "";
+  process.env.ZCODE_MCP_SRC_BUILTIN_CONFIG || resolvePath(localConfig.forkBuiltinConfig) || "";
+
+/** `node zcode-mcp.mjs --doctor`:路径自检。给人和 AI 客户端排查"找不到文件"用。 */
+function runDoctor() {
+  const lines = [];
+  const check = (label, path, extra = "") => {
+    const ok = Boolean(path && existsSync(path));
+    lines.push(`${ok ? "OK  " : "MISS"} ${label}: ${path || "(未配置)"}${extra}`);
+    return ok;
+  };
+  lines.push(`node: ${process.version} | cwd: ${process.cwd()}`);
+  lines.push(`self: ${SELF_DIR}`);
+  check("installedCli(装机版 CLI)", ZCODE_BIN);
+  check("forkCliDir 源码入口", ZCODE_SRC_CLI_DIR ? join(ZCODE_SRC_CLI_DIR, "src", "main.ts") : "");
+  check("forkBuiltinConfig", ZCODE_SRC_BUILTIN_CONFIG);
+  lines.push(`     sandbox: ${DEFAULT_SANDBOX}`);
+  lines.push(`     flashSession: ${FLASH_SESSION ? "已配置" : "未配置(glm-5.3-flash 禁用)"}`);
+  lines.push(`     freeSession: ${FREE_SESSION ? "已配置" : "未配置(glm-free 禁用)"}`);
+  lines.push("");
+  lines.push("提示:MCP 客户端(ChatGPT/Claude)配置里的 args 必须是绝对路径;");
+  lines.push("本文件所在目录见上方 self 行,把该目录拼到文件名前即可。");
+  console.log(lines.join("\n"));
+}
 
 const NODE = process.execPath;
 
@@ -174,6 +207,12 @@ async function callTool(name, args) {
     };
   }
   let r;
+  if (!existsSync(ZCODE_BIN)) {
+    return {
+      content: [{ type: "text", text: `找不到 ZCode CLI: ${ZCODE_BIN}\n运行 node zcode-mcp.mjs --doctor 检查路径;Windows 默认位置是 %LOCALAPPDATA%\\Programs\\ZCode\\resources\\glm\\zcode.cjs` }],
+      isError: true,
+    };
+  }
   if (model === "glm-free") {
     r = await runSourceZcode(
       ["--resume", FREE_SESSION, "-p", String(args.task), "--cwd", workdir, "--mode", "yolo"],
@@ -192,6 +231,12 @@ async function callTool(name, args) {
 
 const rl = (await import("node:readline")).createInterface({ input: process.stdin });
 const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
+
+if (process.argv.includes("--doctor")) {
+  rl.close();
+  runDoctor();
+  process.exit(0);
+}
 
 rl.on("line", (line) => {
   let req;
