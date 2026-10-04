@@ -1,0 +1,224 @@
+#!/usr/bin/env node
+/**
+ * zcode-mcp —— 把本机 ZCode(GLM, 走你的 coding plan 订阅)暴露为 MCP 工具,
+ * 供 ChatGPT / Claude Desktop / Cursor 等任意 MCP 客户端调用:
+ * 让 GPT 当编排者, 把编码/执行类子任务整包委派给 GLM agent。
+ *
+ * 零依赖:手写 MCP stdio 协议(JSON-RPC 2.0)。
+ * 前提:本机 CLI 已 `zcode login`(OAuth 一次)。
+ *
+ * 启动:node zcode-mcp.mjs            (由 MCP 客户端以 stdio 方式拉起)
+ * 环境变量:
+ *   ZCODE_BIN   zcode CLI 入口,默认用桌面版自带的 zcode.cjs
+ *   ZCODE_MCP_SANDBOX  glm_ask 默认工作目录(可写沙箱)
+ */
+import { spawn } from "node:child_process";
+import { mkdirSync, readFileSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const SELF_DIR = dirname(fileURLToPath(import.meta.url));
+
+/** 本地配置(不入库):zcode-mcp.config.json,字段见 zcode-mcp.config.example.json。 */
+function loadLocalConfig() {
+  const p = join(SELF_DIR, "zcode-mcp.config.json");
+  if (!existsSync(p)) return {};
+  try {
+    return JSON.parse(readFileSync(p, "utf8"));
+  } catch {
+    return {};
+  }
+}
+const localConfig = loadLocalConfig();
+
+const ZCODE_BIN =
+  process.env.ZCODE_BIN || localConfig.installedCli ||
+  join(homedir(), "AppData/Local/Programs/ZCode/resources/glm/zcode.cjs");
+const DEFAULT_SANDBOX =
+  process.env.ZCODE_MCP_SANDBOX || localConfig.sandbox || join(homedir(), "zcode-mcp-sandbox");
+/** Flash 桥会话:其持久化 model_selection=GLM-5.3-Flash,flash 调用经 --resume 复用它。 */
+const FLASH_SESSION = process.env.ZCODE_MCP_FLASH_SESSION || localConfig.flashSession || "";
+/** 免费档(Start Plan)桥会话:走 fork 源码 CLI(支持 start-plan 的补丁版)。 */
+const FREE_SESSION = process.env.ZCODE_MCP_FREE_SESSION || localConfig.freeSession || "";
+/** fork 源码 CLI 目录:standalone 运行时已补 start-plan 支持(需先 build bootstrap)。 */
+const ZCODE_SRC_CLI_DIR =
+  process.env.ZCODE_MCP_SRC_CLI_DIR || localConfig.forkCliDir || "";
+const ZCODE_SRC_BUILTIN_CONFIG =
+  process.env.ZCODE_MCP_SRC_BUILTIN_CONFIG || localConfig.forkBuiltinConfig || "";
+
+const NODE = process.execPath;
+
+function runSourceZcode(args, timeoutMs) {
+  return new Promise((resolve) => {
+    const child = spawn(NODE, ["--import", "tsx", "src/main.ts", ...args], {
+      cwd: ZCODE_SRC_CLI_DIR,
+      env: {
+        ...process.env,
+        ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: ZCODE_SRC_BUILTIN_CONFIG,
+      },
+      shell: false,
+      windowsHide: true,
+    });
+    let out = "",
+      err = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve({ code: 124, out, err: err + `\n[zcode-mcp] 超时 ${timeoutMs}ms 已终止` });
+    }, timeoutMs);
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ code: 1, out, err: err + String(e) });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? 1, out, err });
+    });
+  });
+}
+
+function runZcode(args, timeoutMs) {
+  return new Promise((resolve) => {
+    const child = spawn(NODE, [ZCODE_BIN, ...args], {
+      cwd: DEFAULT_SANDBOX,
+      env: process.env,
+      shell: false,
+      windowsHide: true,
+    });
+    let out = "",
+      err = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve({ code: 124, out, err: err + `\n[zcode-mcp] 超时 ${timeoutMs}ms 已终止` });
+    }, timeoutMs);
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ code: 1, out, err: err + String(e) });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? 1, out, err });
+    });
+  });
+}
+
+const TOOLS = [
+  {
+    name: "glm_ask",
+    description:
+      "向 GLM(Z.ai 编码智能体,具备读写文件/执行命令等完整工具链)委派一个任务并等待完成," +
+      "返回最终答复文本。适合让另一个 AI 把编码、排查、抓取等子任务整包外包给 GLM。" +
+      "每次调用是一个独立的 ZCode 无头会话,秒到分钟级,不适合闲聊式逐句对话。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task: { type: "string", description: "要委派给 GLM 的完整任务描述(中文/英文均可)" },
+        model: {
+          type: "string",
+          enum: ["glm-5.3", "glm-5.3-flash", "glm-free"],
+          description:
+            "可选:glm-5.3(默认,强,耗订阅)/ glm-5.3-flash(快,耗订阅)/ glm-free(免费档 GLM-5.3-Flash,不耗订阅额度)",
+        },
+        workdir: {
+          type: "string",
+          description: `可选:GLM 的工作目录(绝对路径)。缺省用沙箱 ${DEFAULT_SANDBOX}`,
+        },
+        timeout_seconds: { type: "number", description: "可选:超时秒数,默认 300" },
+      },
+      required: ["task"],
+    },
+  },
+  {
+    name: "glm_models",
+    description: "查询当前账号(coding plan)可用的 GLM 模型目录及推理档位。",
+    inputSchema: { type: "object", properties: {} },
+  },
+];
+
+async function callTool(name, args) {
+  if (name === "glm_models") {
+    const r = await runZcode(
+      [
+        "-p",
+        "调用你的 list-models 工具,原样列出每个模型的 providerId/modelId 与 reasoningLevels,不要省略。",
+        "--cwd",
+        DEFAULT_SANDBOX,
+      ],
+      120_000,
+    );
+    return { content: [{ type: "text", text: r.out.trim() || r.err.trim() }], isError: r.code !== 0 };
+  }
+  if (name !== "glm_ask")
+    return { content: [{ type: "text", text: `未知工具 ${name}` }], isError: true };
+
+  const workdir = args.workdir || DEFAULT_SANDBOX;
+  mkdirSync(workdir, { recursive: true });
+  const timeoutMs = Math.min(Math.max((args.timeout_seconds ?? 300) * 1000, 10_000), 900_000);
+
+  // glm-free 走 fork 源码 CLI(免订阅额度);flash 走桥会话;默认走装机版新会话。
+  const model = String(args.model || "").toLowerCase();
+  if (model === "glm-free" && (!FREE_SESSION || !ZCODE_SRC_CLI_DIR || !ZCODE_SRC_BUILTIN_CONFIG)) {
+    return {
+      content: [{ type: "text", text: "glm-free 未配置:需要在 zcode-mcp.config.json 或环境变量里提供 freeSession/forkCliDir/forkBuiltinConfig(见 README「免费档」一章)。" }],
+      isError: true,
+    };
+  }
+  if (model === "glm-5.3-flash" && !FLASH_SESSION) {
+    return {
+      content: [{ type: "text", text: "glm-5.3-flash 未配置:需要 flashSession(见 README)。" }],
+      isError: true,
+    };
+  }
+  let r;
+  if (model === "glm-free") {
+    r = await runSourceZcode(
+      ["--resume", FREE_SESSION, "-p", String(args.task), "--cwd", workdir, "--mode", "yolo"],
+      timeoutMs,
+    );
+  } else {
+    const flash = model === "glm-5.3-flash";
+    const cliArgs = flash
+      ? ["--resume", FLASH_SESSION, "-p", String(args.task), "--cwd", workdir, "--mode", "yolo"]
+      : ["-p", String(args.task), "--cwd", workdir, "--mode", "yolo"];
+    r = await runZcode(cliArgs, timeoutMs);
+  }
+  const text = (r.out.trim() || "") + (r.err.trim() ? `\n[stderr]\n${r.err.trim()}` : "");
+  return { content: [{ type: "text", text: text || "(无输出)" }], isError: r.code !== 0 };
+}
+
+const rl = (await import("node:readline")).createInterface({ input: process.stdin });
+const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
+
+rl.on("line", (line) => {
+  let req;
+  try {
+    req = JSON.parse(line);
+  } catch {
+    return;
+  }
+  const { id, method, params } = req;
+  if (id === undefined) return; // notification
+  (async () => {
+    if (method === "initialize")
+      return send({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          protocolVersion: params?.protocolVersion || "2024-11-05",
+          capabilities: { tools: {} },
+          serverInfo: { name: "zcode-mcp", version: "0.1.0" },
+        },
+      });
+    if (method === "ping") return send({ jsonrpc: "2.0", id, result: {} });
+    if (method === "tools/list") return send({ jsonrpc: "2.0", id, result: { tools: TOOLS } });
+    if (method === "tools/call") {
+      const result = await callTool(params?.name, params?.arguments || {});
+      return send({ jsonrpc: "2.0", id, result });
+    }
+    return send({ jsonrpc: "2.0", id, error: { code: -32601, message: `unknown method ${method}` } });
+  })().catch((e) => send({ jsonrpc: "2.0", id, error: { code: -32603, message: String(e) } }));
+});
