@@ -39,17 +39,35 @@ function loadLocalConfig() {
 const localConfig = loadLocalConfig();
 
 /** 装机版 ZCode CLI 自动探测:按安装形态逐一尝试常见位置。
- *  覆盖:每用户电子安装版(LOCALAPPDATA)与全机器安装(Program Files)。
+ *  优先 %LOCALAPPDATA%(可被重定向),回退 homedir 推导。
  *  MSIX/商店版装在 WindowsApps(ACL 受限通常不可直读),由 --doctor 给出指引。 */
 function detectInstalledCli() {
   const programFiles = process.env.ProgramFiles || "C:/Program Files";
   const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:/Program Files (x86)";
+  const localAppData = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
   const candidates = [
-    join(homedir(), "AppData", "Local", "Programs", "ZCode", "resources", "glm", "zcode.cjs"),
+    join(localAppData, "Programs", "ZCode", "resources", "glm", "zcode.cjs"),
     join(programFiles, "ZCode", "resources", "glm", "zcode.cjs"),
     join(programFilesX86, "ZCode", "resources", "glm", "zcode.cjs"),
   ];
   return candidates.find((p) => existsSync(p)) || candidates[0];
+}
+
+/** 装机版 CLI 的运行时环境:显式注入内置/个人 provider 配置路径。
+ *  实测 Program Files 安装形态下 CLI 自身的相对探测会推算错误
+ *  (试 resources/glm/provider/ 等不存在路径);两种安装形态下真实布局都是
+ *  <cli>/../config/provider/zcode-builtin.json,从 CLI 自身位置推导最稳。 */
+function cliRuntimeEnv() {
+  const env = { ...process.env };
+  if (!env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE) {
+    const p = join(dirname(ZCODE_BIN), "..", "config", "provider", "zcode-builtin.json");
+    if (existsSync(p)) env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = p;
+  }
+  if (!env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE) {
+    const p = join(homedir(), ".zcode", "v2", "provider_config.json");
+    if (existsSync(p)) env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE = p;
+  }
+  return env;
 }
 const ZCODE_BIN =
   process.env.ZCODE_BIN || resolvePath(localConfig.installedCli) || detectInstalledCli();
@@ -79,18 +97,29 @@ function runDoctor() {
   };
   lines.push(`node: ${process.version} | cwd: ${process.cwd()}`);
   lines.push(`self: ${SELF_DIR}`);
-  const cliOk = check("installedCli(装机版 CLI)", ZCODE_BIN);
+  // 只把「已启用通道的必需项」计入失败:fork 未配置=禁用而非缺失;
+  // installedCli 仅在非 free-only 布局(freeSession 未配置)时为必需。
+  const freeEnabled = Boolean(FREE_SESSION);
+  const installedCliRequired = !freeEnabled;
+  let cliOk = existsSync(ZCODE_BIN);
+  lines.push(`${cliOk ? "OK  " : installedCliRequired ? "MISS" : "WARN"} installedCli(装机版 CLI): ${ZCODE_BIN}${cliOk ? "" : installedCliRequired ? "" : "(free-only 布局,非必需)"}`);
+  if (!cliOk && installedCliRequired) missCount += 1;
   if (!cliOk) {
     lines.push("     ├ 探测过: %LOCALAPPDATA%\\Programs、%ProgramFiles%、%ProgramFiles(x86)%");
     lines.push("     └ 仍 MISS 的常见原因:MSIX/商店版(WindowsApps 内 ACL 受限不可直读,");
     lines.push("        建议改装桌面安装版),或自定义安装目录(把完整路径填进 installedCli)。");
     lines.push("     └ 定位命令: powershell -c \"Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -EA 0 | ? DisplayName -like '*ZCode*' | % InstallLocation\"");
   }
-  check("forkCliDir 源码入口", ZCODE_SRC_CLI_DIR ? join(ZCODE_SRC_CLI_DIR, "src", "main.ts") : "");
-  check("forkBuiltinConfig", ZCODE_SRC_BUILTIN_CONFIG);
+  if (freeEnabled) {
+    check("forkCliDir 源码入口", ZCODE_SRC_CLI_DIR ? join(ZCODE_SRC_CLI_DIR, "src", "main.ts") : "");
+    check("forkBuiltinConfig", ZCODE_SRC_BUILTIN_CONFIG);
+  } else {
+    lines.push("DISABLED fork(glm-free 未配置 freeSession,不计为缺失)");
+  }
   lines.push(`     sandbox: ${DEFAULT_SANDBOX}`);
   lines.push(`     flashSession: ${FLASH_SESSION ? "已配置" : "未配置(glm-5.3-flash 禁用)"}`);
   lines.push(`     freeSession: ${FREE_SESSION ? "已配置" : "未配置(glm-free 禁用)"}`);
+  lines.push(`     登录状态: 无法离线检测;首次真实调用报 "Select a model" 即需 login(见 README「登录」)`);
   lines.push("");
   lines.push("提示:MCP 客户端(ChatGPT/Claude)配置里的 args 必须是绝对路径;");
   lines.push("本文件所在目录见上方 self 行,把该目录拼到文件名前即可。");
@@ -141,7 +170,7 @@ function runZcode(args, timeoutMs) {
     } catch {}
     const child = spawn(NODE, [ZCODE_BIN, ...args], {
       cwd: DEFAULT_SANDBOX,
-      env: process.env,
+      env: cliRuntimeEnv(),
       shell: false,
       windowsHide: true,
     });
@@ -274,7 +303,13 @@ async function callTool(name, args) {
         : ["-p", task, "--cwd", workdir, "--mode", "yolo"];
     r = await runZcode(cliArgs, timeoutMs);
   }
-  const text = (r.out.trim() || "") + (r.err.trim() ? `\n[stderr]\n${r.err.trim()}` : "");
+  let text = (r.out.trim() || "") + (r.err.trim() ? `\n[stderr]\n${r.err.trim()}` : "");
+  // 高频误区自动提示:"Select a model" 是 CLI 未登录/无默认模型的标志(登录一次即解)。
+  if (/Select a model before continuing|Model creation failed/i.test(text)) {
+    text +=
+      "\n\n[zcode-mcp] 该错误的常见原因是本机 CLI 尚未登录(无默认模型选择),不是账号或服务问题。" +
+      "解决:按 README「登录」一节执行一次 login bigmodel(国内账号),凭证落盘后自动生效。";
+  }
   return { content: [{ type: "text", text: text || "(无输出)" }], isError: r.code !== 0 };
 }
 

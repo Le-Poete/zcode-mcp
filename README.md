@@ -32,6 +32,9 @@
 
 ### 1. 登录(一次性)
 
+**未登录的标志**:首次调用返回 `Model creation failed / Select a model before continuing`
+——这是 CLI 没有默认模型选择,不是账号或服务问题,登录一次即解:
+
 ```bash
 # 国内(bigmodel.cn,会员在这边):
 node "%LOCALAPPDATA%/Programs/ZCode/resources/glm/zcode.cjs" login bigmodel
@@ -39,6 +42,9 @@ node "%LOCALAPPDATA%/Programs/ZCode/resources/glm/zcode.cjs" login bigmodel
 ```
 
 登录态落盘于 `~/.zcode/v2/credentials.json`,自动刷新,无需反复授权。
+
+> Program Files(全机器)安装形态的用户:CLI 自身的内置配置探测在该布局下会失效,
+> zcode-mcp 已代为注入正确路径(从 CLI 位置推导),无需手工设置。
 
 ### 2. 配置
 
