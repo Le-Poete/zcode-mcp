@@ -12,6 +12,22 @@
 **核心价值:委派的不是"纯文本模型",是带完整工具链的 agent**——GLM 那边能读写文件、
 执行命令、跑测试。GPT 当编排者,把"改代码/排查问题/处理文件"整包外包。
 
+## 最短路径(30 秒上手)
+
+前提:已装 ZCode 桌面版并在桌面登录过 + 装了 Node.js。依次执行,每步的输出都会告诉你下一步:
+
+```bash
+git clone https://github.com/Le-Poete/zcode-mcp.git && cd zcode-mcp
+node zcode-mcp.mjs --doctor            # ① 体检:缺什么它会说,全 OK 直接跳到 ③
+node zcode-mcp.mjs --repair-cli        # ② 预览:仅当 ① 后调用报"Select a model"时需要
+node zcode-mcp.mjs --repair-cli --apply
+```
+
+③ 把 zcode-mcp.mjs 的**绝对路径**填进你的 MCP 客户端(格式见「接入 MCP 客户端」),完事。
+
+跑通后让 ChatGPT/Claude 调 `glm_ask("随便一个任务")` 验证。卡住了?`--doctor` 的输出
+和「路径速查」就是排障入口;两台不同安装形态的真机 + 五轮独立复验覆盖过的坑,提示里都有。
+
 ## 三条模型通道
 
 | model 参数 | 模型 | 计费 | 前置条件 |
