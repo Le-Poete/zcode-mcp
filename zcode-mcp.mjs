@@ -285,10 +285,23 @@ async function callTool(name, args) {
         isError: true,
       };
     }
+    const startedAt = Date.now();
     r = await runSourceZcode(
       ["--resume", FREE_SESSION, "-p", task, "--cwd", workdir, "--mode", "yolo"],
       timeoutMs,
     );
+    // 免费档配额是账号级共享池(桌面端也在消耗),超限是滚动窗口、分钟级自愈:
+    // 预算允许时延迟重试一次,把瞬时窗口耗尽消化掉而不是直接报错。
+    if (
+      /exceed quota limit/i.test(r.out + r.err) &&
+      timeoutMs - (Date.now() - startedAt) > 45_000
+    ) {
+      await new Promise((res) => setTimeout(res, 30_000));
+      r = await runSourceZcode(
+        ["--resume", FREE_SESSION, "-p", task, "--cwd", workdir, "--mode", "yolo"],
+        timeoutMs,
+      );
+    }
   } else {
     if (model === "glm-5.3-flash" && !FLASH_SESSION) {
       return {
@@ -309,6 +322,12 @@ async function callTool(name, args) {
     r = await runZcode(cliArgs, timeoutMs);
   }
   let text = (r.out.trim() || "") + (r.err.trim() ? `\n[stderr]\n${r.err.trim()}` : "");
+  // 免费档配额超限的可操作提示(重试后仍超限时到达这里)。
+  if (/exceed quota limit/i.test(text)) {
+    text +=
+      "\n\n[zcode-mcp] 免费档配额窗口已耗尽(账号级共享池,桌面端使用也消耗同一额度)。" +
+      "通常数分钟内自动恢复;期间可改用 model=glm-5.3-flash(订阅额度)继续。";
+  }
   // 错误提示按具体程度区分,不做超出证据的归因:
   // "Select a model" 是明确的"无模型选择"标志(未登录的常见表现,但不排除其他成因);
   // 泛化的 "Model creation failed" 只指向日志排查。
