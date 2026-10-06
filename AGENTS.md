@@ -107,6 +107,24 @@ forkCliDir 必须指向 apps/zcode-cli/packages/cli。修改本地免费配置�
   这是 agent 形态的固有成本,减少之道只有少带工具/精简 system,当前不可配。
 - 验证入口:`~/.zcode/cli/rollout/model-io-sess_<桥id>.jsonl` 的最后一条记录
   (request.body 看 stream/thinking/output_config,response.usage 看 token)。
+- 桥当前 reasoningLevel=**high**(用户选择,质量优先);基准见下节,复测跑 bench-thinking.mjs。
+
+## 思考时长基准(2026-10-06,effort=high 实测,桥=GLM-5.3-Flash 免费档)
+
+| 任务 | 端到端 | 模型请求 | 模型侧耗时 | 输出tok |
+|---|---|---|---|---|
+| 极简(回一字) | 25s | 1 | 5s | 20 |
+| 简单心算 | 27s | 1 | 6s | 98 |
+| 中等推理(水桶) | 39s | 1 | 18s | 186 |
+| 编码任务 | 74s | 3 | 40s | 1329 |
+| 开放难题(单步) | 110s | 1 | **89s** | 2330 |
+| 多轮工具(5文件读写) | 105s | 4 | 69s | 1476 |
+
+- 固定开销 ~20s(tsx 启动+agent 循环+MCP);单步任务即使很难,模型侧 ≤90s。
+- **"思考20分钟"的机理不是单请求失控,而是长任务多轮复利**:每轮 6-25s 思考+动作,
+  40-60 轮的 agent 编码任务 ≈ 17-25 分钟;配额压力下的网络重试(maxAttempts=11)会再拉长。
+- 缓解:①glm_ask 传紧的 timeout_seconds(轻活 120-180s)②编排方(ChatGPT)把大任务
+  拆成多次小 glm_ask 而不是一次委派整项目③复测用 bench-thinking.mjs。
 
 ## 已知未解
 
