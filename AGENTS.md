@@ -138,6 +138,19 @@ forkCliDir 必须指向 apps/zcode-cli/packages/cli。修改本地免费配置�
 2. 每次成功返回附**成本回执**(通道+耗时),给委托方代价反馈闭环
 3. 使用侧:编排提示词中显式写明拆解要求
 
+## 0.2.0 规范化改造(2026-10-06)
+
+- glm_models 改离线目录:内置配置 providerRules + 凭据**键名**(不解密值)判权益 +
+  defaultModelSelection 标注,0.01s 秒回(此前走完整 agent 会话 ~20s/13.8K tok)。
+- glm_ask/glm_models 带 outputSchema+structuredContent 双写;text 仍为人读全文(兼容旧客户端)。
+- errorKind 分类学:param / not-configured / cli-missing / **quota**(免费档 exceed quota
+  与订阅档 1308 五小时上限同属此类,决策=等待或切通道)/ no-model-selection /
+  model-creation / timeout / cancelled / none。新增类别先改 classifyError+enum。
+- 取消:notifications/cancelled → kill 子进程 + 抑制响应(suppressedResponses 集合,
+  修复过"finally 先删 pendingCalls 导致抑制失效"的竞态)。
+- progress:仅当调用方 _meta.progressToken 存在;即时空拍+每10s心跳。
+- mode 参数(yolo/plan/edit)透传 CLI --mode;task 上限 32K 字符。
+
 ## 已知未解
 
 - 免费档配额的具体窗口长度/额度未测出(仅观察到存在滚动限额)

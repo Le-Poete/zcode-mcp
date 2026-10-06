@@ -44,9 +44,17 @@ node zcode-mcp.mjs --repair-cli --apply
 
 ## 工具
 
-- `glm_ask(task, model?, workdir?, timeout_seconds?)` — 委派任务,等待完成,返回最终答复。
+- `glm_ask(task, model?, workdir?, timeout_seconds?, mode?)` — 委派任务,等待完成,返回最终答复。
   每次调用是一个独立(或桥接)的 ZCode 无头会话,秒到分钟级,适合子任务外包,不适合逐句闲聊。
-- `glm_models()` — 查询当前账号可用的模型目录与推理档位。
+  `mode`: `yolo`(默认,全自动)/ `plan`(只读分析,适合侦察类委派)/ `edit`(改动自动应用)。
+- `glm_models()` — 本地秒级查询可用模型目录(不发起模型调用、不耗额度)。
+
+**Agent 消费契约(0.2.0 起)**:两个工具都声明 `outputSchema` 并返回
+`structuredContent`——`glm_ask` 为 `{ok, answer, channel, elapsedSeconds, errorKind}`,
+其中 `errorKind`(param/not-configured/cli-missing/quota/no-model-selection/
+model-creation/timeout/cancelled/none)供委派方程序化决策(如 quota→等待或切通道,
+timeout→拆小任务);`glm_models` 为 `{models:[{providerId,modelId,reasoningLevels,isDefault}]}`。
+同时支持取消(客户端 cancel 即终止子进程,不再烧额度)与 progress 心跳。
 
 **免费任务必须显式传 `model: "glm-free"`。** 省略 `model` 使用装机版 CLI 的默认
 订阅模型，不会自动切换免费档；`glm_models()` 也走装机版的订阅目录，不是免费通道自测。
