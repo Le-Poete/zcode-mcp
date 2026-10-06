@@ -203,8 +203,12 @@ const TOOLS = [
     name: "glm_ask",
     description:
       "向 GLM(Z.ai 编码智能体,具备读写文件/执行命令等完整工具链)委派一个任务并等待完成," +
-      "返回最终答复文本。适合让另一个 AI 把编码、排查、抓取等子任务整包外包给 GLM。" +
-      "每次调用是一个独立的 ZCode 无头会话,秒到分钟级,不适合闲聊式逐句对话。",
+      "返回最终答复文本。适合让另一个 AI 把编码、排查、抓取等子任务外包给 GLM。" +
+      "每次调用是一个独立的 ZCode 无头会话,秒到分钟级,不适合闲聊式逐句对话。" +
+      "[委派方必读的任务粒度契约] 单次任务应控制在2分钟可完成的粒度:批量生成类工作" +
+      "(如生成N个关卡/组件/数据条目)必须循环调用、每次1-2个,禁止要求一次输出大批量JSON;" +
+      "大项目拆成多次小委派再自行组装。超粒度任务会导致思考时长与失败率急剧上升" +
+      "(实测:单步任务≤90s,多轮复利任务可达20分钟)。返回末尾附成本回执,请据其调整粒度。",
     inputSchema: {
       type: "object",
       properties: {
@@ -248,6 +252,8 @@ async function callTool(name, args) {
     return { content: [{ type: "text", text: `未知工具 ${name}` }], isError: true };
 
   // 参数校验:非法值直接拒绝,不静默落到默认通道(否则拼写错误会悄悄烧订阅额度)。
+  // 成本回执计时起点 + 参数校验:非法值直接拒绝,不静默落到默认通道。
+  const startedAtAll = Date.now();
   const task = typeof args.task === "string" ? args.task.trim() : "";
   if (!task) {
     return {
@@ -322,6 +328,8 @@ async function callTool(name, args) {
     r = await runZcode(cliArgs, timeoutMs);
   }
   let text = (r.out.trim() || "") + (r.err.trim() ? `\n[stderr]\n${r.err.trim()}` : "");
+  // 成本回执:给委派方(GPT等)可见的代价反馈,促使其自我调节任务粒度。
+  if (!r.code) text += `\n\n[zcode-mcp 成本回执] 通道=${model || "glm-5.3"} 耗时=${((Date.now() - startedAtAll) / 1000).toFixed(0)}s`;
   // 免费档配额超限的可操作提示(重试后仍超限时到达这里)。
   if (/exceed quota limit/i.test(text)) {
     text +=
