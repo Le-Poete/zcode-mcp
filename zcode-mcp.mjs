@@ -444,6 +444,7 @@ async function callTool(name, args, requestId) {
       if (!existsSync(forkEntry) || !existsSync(ZCODE_SRC_BUILTIN_CONFIG))
         return fail(`glm-free 的 fork 路径无效: 入口 ${forkEntry} 或内置配置 ${ZCODE_SRC_BUILTIN_CONFIG} 不存在。请核对该 fork 仓库是否已克隆/切换分支。`, "not-configured");
       const startedAt = Date.now();
+      const remainingMs = () => timeoutMs - (Date.now() - startedAt);
       r = await runSourceZcode(
         ["--resume", FREE_SESSION, "-p", task, "--cwd", workdir, "--mode", mode],
         timeoutMs,
@@ -451,17 +452,26 @@ async function callTool(name, args, requestId) {
       );
       // 免费档配额是账号级共享池(桌面端也在消耗),超限是滚动窗口、分钟级自愈:
       // 预算允许时延迟重试一次,把瞬时窗口耗尽消化掉而不是直接报错。
+      // 约束:①等待分片睡眠,期间取消即时生效,不再启动第二次调用;
+      //      ②重试只拿剩余预算(守卫保证 ≥15s),总耗时严格 ≤ timeout_seconds。
+      const WAIT_MS = 30_000;
+      const MIN_RETRY_MS = 15_000;
       if (
         !cancelled &&
         /exceed quota limit/i.test(r.out + r.err) &&
-        timeoutMs - (Date.now() - startedAt) > 45_000
+        remainingMs() - WAIT_MS >= MIN_RETRY_MS
       ) {
-        await new Promise((res) => setTimeout(res, 30_000));
-        r = await runSourceZcode(
-          ["--resume", FREE_SESSION, "-p", task, "--cwd", workdir, "--mode", mode],
-          timeoutMs,
-          onSpawn,
-        );
+        const until = Date.now() + WAIT_MS;
+        while (!cancelled && Date.now() < until) {
+          await new Promise((res) => setTimeout(res, 500));
+        }
+        if (!cancelled) {
+          r = await runSourceZcode(
+            ["--resume", FREE_SESSION, "-p", task, "--cwd", workdir, "--mode", mode],
+            remainingMs(),
+            onSpawn,
+          );
+        }
       }
     } else {
       if (model === "glm-5.3-flash" && !FLASH_SESSION)

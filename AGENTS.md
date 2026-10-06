@@ -151,6 +151,16 @@ forkCliDir 必须指向 apps/zcode-cli/packages/cli。修改本地免费配置�
 - progress:仅当调用方 _meta.progressToken 存在;即时空拍+每10s心跳。
 - mode 参数(yolo/plan/edit)透传 CLI --mode;task 上限 32K 字符。
 
+## 免费档重试的预算纪律(2026-10-06 修复)
+
+配额重试路径的两条硬约束(复验发现过 bug,勿回退):
+1. **取消感知**:30s 等待以 500ms 分片睡眠,期间收到 notifications/cancelled
+   即打断并不启动第二次调用(否则取消后仍烧额度);响应按规范抑制。
+2. **预算封顶**:重试只拿 `remainingMs()`(守卫保证 ≥15s 才重试),
+   总耗时严格 ≤ timeout_seconds——否则重试反而把总时长翻倍。
+验证:假 fork 测试台(假 tsx + 假 main.ts 输出 exceed quota limit + 标记文件计数),
+预算测试 50.6s≤90s 且 2 次调用;取消测试等待窗口打断后 0 次新增调用。
+
 ## 已知未解
 
 - 免费档配额的具体窗口长度/额度未测出(仅观察到存在滚动限额)
