@@ -94,6 +94,20 @@ forkCliDir 必须指向 apps/zcode-cli/packages/cli。修改本地免费配置�
   不使用"破解/绕过/绕开风控"类表述
 - 免费档相关描述必须保留"实验性 + 账号风险自担"的警示,不得删改
 
+## 信号通路验证(2026-10-06,rollout 实测)
+
+免费档全链路健康:MCP→CLI 引导→registry(JWT entitled)→SSE 流式请求→完成。
+- **流式**:请求 `stream:true`,响应 `text/event-stream`——正常且在用。MCP 工具
+  协议本身是"等待完整结果"语义,客户端看到完成文本不是流式故障。
+- **思考档**:桥会话的 reasoningLevel 直接映射为请求的 `output_config.effort`
+  与 `thinking.enabled`。**免费桥必须用 low**——max 会让每笔轻量调用也满档思考,
+  加速烧穿滚动配额窗口(已实测:改 low 后请求体 effort=low 生效)。
+- **固定成本**:每笔调用 input ~13.8K tokens(system ~8.9K 字符 + 17 工具定义 +
+  桥历史),其中大头通常走服务端 prompt 缓存(cacheRead);缓存未命中时全额计。
+  这是 agent 形态的固有成本,减少之道只有少带工具/精简 system,当前不可配。
+- 验证入口:`~/.zcode/cli/rollout/model-io-sess_<桥id>.jsonl` 的最后一条记录
+  (request.body 看 stream/thinking/output_config,response.usage 看 token)。
+
 ## 已知未解
 
 - 免费档配额的具体窗口长度/额度未测出(仅观察到存在滚动限额)
